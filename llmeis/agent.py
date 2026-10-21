@@ -113,17 +113,19 @@ You have two tools:
   (residuals, chi^2), and a verdict on whether the circuit actually fits. Use it to check how well
   a candidate fits and to read off good parameter values.
 - simulate_spectrum(model_str): generates a spectrum from the circuit on the 20-point grid and
-  returns the values. Use it to compare a circuit's predicted curve against the measured one.
+  returns the values, as well as residuals between the simulation and the real spectrum.
+  Use it to compare a circuit's predicted curve against the measured one.
 
 WORKFLOW
 1. Study the Nyquist and Bode plots and the data. Count the arcs/semicircles, look for a
    low-frequency 45-degree Warburg tail, a high-frequency inductive loop, and note the magnitude
    scale of each feature.
-2. Propose a candidate circuit in KISS encoding with concrete parameter estimates.
-3. Call fit_spectrum to check the fit; read the verdict and the fitted parameters.
-4. Call simulate_spectrum to compare the generated curve with the measured one.
-5. Iterate: adjust the topology and parameters until the fit is good and the curves agree.
-6. When confident, produce the final answer.
+2. Consider the possiblity of overlapping features.
+3. Propose a candidate circuit in KISS encoding with concrete parameter estimates.
+4. Call fit_spectrum to check the fit; read the verdict and the fitted parameters.
+5. Call simulate_spectrum to compare the generated curve with the measured one.
+6. Iterate: adjust the topology and parameters until the fit is good and the curves agree.
+7. When confident, produce the final answer.
 
 OUTPUT
 Return the structured output with:
@@ -136,9 +138,8 @@ Return the structured output with:
 CONSTRAINTS
 - The final model_str must be parseable by eisgenerator and must carry a concrete value for every
   element.
-- Do NOT use the Gerischer element "g".
 - Prefer the simplest circuit that fits the data well; do not add elements that do not improve the
-  fit.
+  fit but don't oversimplify either.
 """
 
 
