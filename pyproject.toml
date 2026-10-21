@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llmeis"
+version = "0.1.0"
+description = "Identify the equivalent circuit model of EIS spectra with a Pydantic AI agent"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic-ai>=2.0",
+    "openai>=1.0",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    # eisgenerator (eisgeneratorpy) is a local pybind11 package; install it into the venv from
+    # /home/philipp/Programming/kiss/eisgeneratorpy before running.
+]
+
+[project.scripts]
+llmeis = "llmeis.__main__:main"
+
+[tool.setuptools]
+packages = ["llmeis"]
