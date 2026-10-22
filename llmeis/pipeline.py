@@ -6,6 +6,7 @@ import os
 import queue
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from pydantic_ai import BinaryImage
@@ -39,6 +40,42 @@ from .spectra import (
 from .tools import SpectrumDeps, parse_eisfit_output, run_eisfit
 
 _STDOUT_LOCK = threading.Lock()
+
+
+def _fmt_eta(seconds: float) -> str:
+    """A duration as a compact human-readable string for the ETA line."""
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+class _Progress:
+    """Thread-safe completion counter that reports progress and an ETA.
+
+    The ETA is throughput-based: elapsed wall time per completed spectrum times the number
+    remaining. Parallel workers raise the completion rate, so this already accounts for them."""
+
+    def __init__(self, total: int):
+        self.total = total
+        self._lock = threading.Lock()
+        self._done = 0
+        self._start = time.monotonic()
+
+    def finished(self) -> str:
+        """Record one finished spectrum and return the progress/ETA line for it."""
+        with self._lock:
+            self._done += 1
+            done = self._done
+            remaining = self.total - done
+            if remaining <= 0:
+                return f"({done}/{self.total} done)"
+            eta = (time.monotonic() - self._start) / done * remaining
+            return f"({done}/{self.total} done, eta {_fmt_eta(eta)})"
 
 
 def _safe(name: str) -> str:
@@ -359,6 +396,7 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
         jobs.append((i, spec))
 
     results: list[dict] = [None] * len(jobs)
+    progress = _Progress(len(jobs))
 
     # Shared work queue: every worker (across all backends) pulls the next spectrum from here, so
     # a backend that frees a slot immediately picks up the next job. Fully populated before any
@@ -375,14 +413,16 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
                 return
             try:
                 with _STDOUT_LOCK:
-                    print(f"[{index + 1}] {spec.name}")
+                    print(f"[{index + 1}/{len(jobs)}] {spec.name}")
                 res = process_spectrum(spec, agent, outdir, cfg)
                 results[job_pos] = res
                 status = res["error"] or (res["fit"]["verdict"] if res["fit"] else "")
+                eta_line = progress.finished()
                 with _STDOUT_LOCK:
                     print(f"    -> {res['model_str']}  (confidence {res['confidence']})")
                     if status:
                         print(f"       {status[:100]}")
+                    print(f"       {eta_line}")
             except Exception as e:
                 results[job_pos] = {
                     "name": spec.name,
@@ -393,8 +433,10 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
                     "fit": None,
                     "error": f"worker failed: {e}",
                 }
+                eta_line = progress.finished()
                 with _STDOUT_LOCK:
-                    print(f"    -> [{index + 1}] {spec.name} FAILED: {e}")
+                    print(f"    -> [{index + 1}/{len(jobs)}] {spec.name} FAILED: {e}")
+                    print(f"       {eta_line}")
 
 
     for agent in agents:
