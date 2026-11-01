@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llmeis"
+name = "eisheater"
 version = "0.1.0"
 description = "Identify the equivalent circuit model of EIS spectra with a Pydantic AI agent"
 requires-python = ">=3.11"
@@ -12,12 +12,15 @@ dependencies = [
     "openai>=1.0",
     "matplotlib>=3.8",
     "numpy>=1.26",
-    # eisgenerator (eisgeneratorpy) is a local pybind11 package; install it into the venv from
-    # /home/philipp/Programming/kiss/eisgeneratorpy before running.
+    # The three kiss python bindings are local pybind11 packages with no public wheels; install
+    # them into the venv from their checkouts before running:
+    #   ../kisstypepy    -> kisstype   (reads the .eis/EISF spectra)
+    #   ../eisfitpy      -> eisfit     (fits the circuits, in process, no CLI involved)
+    #   ../eisgeneratorpy-> eisgenerator (simulates circuits for the simulate tool)
 ]
 
 [project.scripts]
-llmeis = "llmeis.__main__:main"
+eisheater = "eisheater.__main__:main"
 
 [tool.setuptools]
-packages = ["llmeis"]
+packages = ["eisheater"]

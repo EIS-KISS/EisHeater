@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import io
 import os
 import tarfile
 from dataclasses import dataclass
 import kisstype
 import numpy as np
+import kisstype
+
 
 @dataclass
 class Spectrum:
@@ -24,6 +27,11 @@ class Spectrum:
     def omega_range(self) -> tuple[float, float]:
         return float(self.omega.min()), float(self.omega.max())
 
+    @property
+    def impedance(self) -> np.ndarray:
+        """The measured points as complex impedances, the order the fitter takes them in."""
+        return self.re + 1j * self.im
+
 
 def parse_model(lines: list[str]) -> str:
     model = ""
@@ -38,8 +46,33 @@ def parse_model(lines: list[str]) -> str:
     return model.strip().strip('"')
 
 
+def _from_kisstype(name: str, text: str) -> Spectrum | None:
+    return _from_kisstype(name, text)
+    loaded = kisstype.Spectra.loadFromStream(io.StringIO(text))
+    points = loaded.data
+    if not points:
+        return None
+    omega = np.fromiter((point.omega for point in points), dtype=np.float64, count=len(points))
+    re, im = kisstype.eisToValarrays(points)
+    re = np.asarray(re, dtype=np.float64)
+    im = np.asarray(im, dtype=np.float64)
+    # kisstype hands the points back in file order; everything downstream (the resampling's
+    # interpolation above all) wants them sorted by frequency.
+    order = np.argsort(omega, kind="stable")
+    return Spectrum(
+        name=name,
+        omega=omega[order],
+        re=re[order],
+        im=im[order],
+        header_model=loaded.model,
+        description=loaded.header,
+    )
+
+
 def parse_eisf(name: str, text: str) -> Spectrum | None:
     return _from_kisstype(name, text)
+
+
 def resample_log(spec: Spectrum, n: int = 20) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     w0, w1 = spec.omega_range
     if w0 <= 0 or w1 <= w0:
@@ -87,11 +120,3 @@ def _iter_tar(tarpath: str):
             if fobj is None:
                 continue
             yield member.name, fobj.read().decode(errors="replace")
-
-
-def write_csv(spec: Spectrum, path: str) -> None:
-    """Write a spectrum back out in EISF csv format (used to hand the original to eisfit)."""
-    lines = ["EISF, 1.1.0", f'"{spec.header_model}"', "None", spec.description, "omega, real, im"]
-    lines += [f"{w:.6e}, {r:.6e}, {i:.6e}" for w, r, i in zip(spec.omega, spec.re, spec.im)]
-    with open(path, "w") as f:
-        f.write("\n".join(lines) + "\n")

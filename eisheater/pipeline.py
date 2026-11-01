@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import queue
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -26,6 +25,7 @@ from pydantic_ai.messages import (
 
 from .agent import SYSTEM_PROMPT
 from .eisgen import eisgenerator
+from .fitting import fit_to_dict
 from .modelstr import validate_model_str
 from .plotting import plot_bode, plot_nyquist
 from .spectra import (
@@ -35,9 +35,8 @@ from .spectra import (
     iter_spectra,
     parse_eisf,
     resample_log,
-    write_csv,
 )
-from .tools import SpectrumDeps, parse_eisfit_output, run_eisfit
+from .tools import SpectrumDeps
 
 _STDOUT_LOCK = threading.Lock()
 
@@ -326,75 +325,68 @@ def process_spectrum(spec: Spectrum, agent, outdir: Path, cfg) -> dict:
         "error": None,
     }
 
-    with tempfile.TemporaryDirectory(prefix="llmeis_") as tmpdir:
-        csv_path = os.path.join(tmpdir, "spectrum.csv")
-        write_csv(spec, csv_path)
-        deps = SpectrumDeps(
-            csv_path=csv_path,
-            omega=spec.omega,
-            re=spec.re,
-            im=spec.im,
-            res_omega=res_omega,
-            res_re=res_re,
-            res_im=res_im,
-            n_original=spec.n_points,
-            omega_range=spec.omega_range,
+    deps = SpectrumDeps(
+        omega=spec.omega,
+        re=spec.re,
+        im=spec.im,
+        res_omega=res_omega,
+        res_re=res_re,
+        res_im=res_im,
+        n_original=spec.n_points,
+        omega_range=spec.omega_range,
+    )
+    prompt = build_prompt(spec, res_omega, res_re, res_im, nyquist_png, bode_png)
+    if cfg.turns_stdout:
+        initial_request = [
+            {"kind": "system-prompt", "content": SYSTEM_PROMPT},
+            {"kind": "user-prompt", "content": _serialize_prompt_content(prompt)},
+        ]
+        turns_stream = TurnsStream(on_turn=_print_turn, initial_request=initial_request)
+    else:
+        turns_stream = None
+    try:
+        out, messages = run_agent_with_validation(
+            agent,
+            prompt,
+            deps,
+            cfg,
+            event_stream_handler=turns_stream.handle if turns_stream else None,
         )
-        prompt = build_prompt(spec, res_omega, res_re, res_im, nyquist_png, bode_png)
-        if cfg.turns_stdout:
-            initial_request = [
-                {"kind": "system-prompt", "content": SYSTEM_PROMPT},
-                {"kind": "user-prompt", "content": _serialize_prompt_content(prompt)},
-            ]
-            turns_stream = TurnsStream(on_turn=_print_turn, initial_request=initial_request)
-        else:
-            turns_stream = None
-        try:
-            out, messages = run_agent_with_validation(
-                agent,
-                prompt,
-                deps,
-                cfg,
-                event_stream_handler=turns_stream.handle if turns_stream else None,
-            )
-        except Exception as e:
-            result["error"] = f"agent run failed: {e}"
-            (outdir / f"{safe}.json").write_text(json.dumps(result, indent=2))
-            return result
+    except Exception as e:
+        result["error"] = f"agent run failed: {e}"
+        (outdir / f"{safe}.json").write_text(json.dumps(result, indent=2))
+        return result
 
-        result["model_str"] = out.model_str
-        result["confidence"] = out.confidence
-        result["type"] = out.type
+    result["model_str"] = out.model_str
+    result["confidence"] = out.confidence
+    result["type"] = out.type
 
-        if cfg.dump_turns:
-            (outdir / f"{safe}.turns.json").write_text(json.dumps(serialize_turns(messages), indent=2))
+    if cfg.dump_turns:
+        (outdir / f"{safe}.turns.json").write_text(json.dumps(serialize_turns(messages), indent=2))
 
-        fit_report = run_eisfit(csv_path, out.model_str)
-        fit = parse_eisfit_output(fit_report)
-        result["fit"] = {
-            "parameters": fit["parameters"],
-            "fitted_model": fit["fitted_model"],
-            "fit_quality": fit["fit_quality"],
-            "verdict": fit["verdict"],
-        }
+    result["fit"] = fit_to_dict(spec.omega, spec.re, spec.im, out.model_str)
 
     (outdir / f"{safe}.json").write_text(json.dumps(result, indent=2))
     return result
 
 
 def _load_previous_results(outdir: Path) -> dict[str, dict]:
-    """The previous run's per-spectrum results from outdir/summary.json, keyed by spectrum name.
+    """The previous run's per-spectrum results from outdir's <name>.json files, keyed by spectrum name.
 
-    Empty (so a resume degrades to a full run) when there is no summary yet or it cannot be read."""
-    summary_path = outdir / "summary.json"
-    if not summary_path.is_file():
-        return {}
-    try:
-        summary = json.loads(summary_path.read_text())
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"resume: could not read {summary_path} ({e}); processing all spectra")
-        return {}
-    return {r["name"]: r for r in summary.get("results", []) if r.get("name")}
+    Empty (so a resume degrades to a full run) when the dir has no per-spectrum JSON yet. A file
+    that cannot be read (e.g. truncated by a crash) is skipped, so its spectrum is reprocessed."""
+    results: dict[str, dict] = {}
+    for path in sorted(outdir.glob("*.json")):
+        if path.name == "summary.json" or path.name.endswith(".turns.json"):
+            continue
+        try:
+            result = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"resume: could not read {path} ({e}); reprocessing it")
+            continue
+        if isinstance(result, dict) and result.get("name"):
+            results[result["name"]] = result
+    return results
 
 
 def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[dict]:
@@ -422,7 +414,7 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
         reused = len(all_specs) - len(jobs)
         print(
             f"resume: reusing {reused} completed spectra; reprocessing {len(jobs)} "
-            f"({len(errored)} errored, {len(new)} not in summary)"
+            f"({len(errored)} errored, {len(new)} without a previous result)"
         )
 
     results: list[dict] = [None] * len(jobs)
@@ -467,7 +459,6 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
                 with _STDOUT_LOCK:
                     print(f"    -> [{job_pos + 1}/{len(jobs)}] {spec.name} FAILED: {e}")
                     print(f"       {eta_line}")
-
 
     for agent in agents:
         t = threading.Thread(target=_worker, args=(agent,))

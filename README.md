@@ -1,8 +1,8 @@
-# llmeis
+# EisHeater
 
 Identify the equivalent circuit model (ECM) of EIS spectra with a Pydantic AI agent.
 
-For each spectrum in a kisstype dataset tar, llmeis renders Nyquist and Bode plots, resamples the
+For each spectrum in a kisstype dataset tar, EisHeater renders Nyquist and Bode plots, resamples the
 spectrum to 20 log-spaced points, and hands all three forms to a multimodal LLM. The LLM
 reasons over several turns, calling tools to fit candidate circuits (`eisfit`) and to
 simulate them on the resampled grid (`eisgenerator`), then returns a structured answer.
@@ -12,13 +12,12 @@ what the spectrum is believed to measure, and the parameters of a final `eisfit`
 ## Requirements
 
 - Python >= 3.11
-- `eisfit` on your `$PATH`
-- `eisgenerator` (the `eisgenerator` python bindings)
 - Any OpenAI compatible llm endpoint serving a multimodal model
 - kiss python bindings:
   - libkisstypepy
   - libeisfitpy
   - eisgeneratorpy
+
 
 ## Setup
 
@@ -29,7 +28,7 @@ pip install -e .
 ## Usage
 
 ```sh
-llmeis <dataset> --model <model-name> --endpoint http://<host>:8080/v1 -o results
+eisheater <dataset> --model <model-name> --endpoint http://<host>:8080/v1 -o results
 ```
 
 options (see `--help` for all):
@@ -42,6 +41,7 @@ options (see `--help` for all):
 | `--limit N` | `0` | process only the first N spectra (0 = all) |
 | `--max-tokens` | `65536` | max completion tokens per turn (reasoning models need headroom) |
 | `--request-timeout` | `3600` | per-request read timeout in seconds |
+| `--concurrency` | `1` | spectra processed in parallel per backend |
+| `--resume` | off | reuse the outdir's results and only reprocess the errored and new spectra |
 | `--turns` | off | also write a per-spectrum `<name>.turns.json` with the agent's turn history |
 | `--turns-stdout` | off | stream the agent's turns (reasoning, tool calls, returns) to stdout as it runs |
-

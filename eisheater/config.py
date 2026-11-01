@@ -1,4 +1,4 @@
-"""Command-line configuration for the llmeis pipeline."""
+"""Command-line configuration for the eisheater pipeline."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class Config:
     dump_turns: bool = False  # write a per-spectrum <name>.turns.json with the agent's turns
     turns_stdout: bool = False  # stream the agent's turns to stdout as the run progresses
     concurrency: int = 1  # spectra processed in parallel (1 = sequential)
-    resume: bool = False  # reuse the outdir's summary.json and only (re)process errored/new spectra
+    resume: bool = False  # reuse the outdir's per-spectrum JSON files and only (re)process errored/new spectra
 
     @property
     def model_settings(self) -> dict:
@@ -83,9 +83,9 @@ def parse_args(argv=None) -> Config:
     ap.add_argument(
         "--resume",
         action="store_true",
-        help="resume an existing run in the output dir: reuse its summary.json and only reprocess "
-             "the spectra that returned an error (plus any not yet in the summary); leave the "
-             "successful results untouched",
+        help="resume an existing run in the output dir: reuse its per-spectrum JSON files and only "
+             "reprocess the spectra that returned an error (plus any without a previous result); "
+             "leave the successful results untouched",
     )
     args = ap.parse_args(argv)
     return Config(

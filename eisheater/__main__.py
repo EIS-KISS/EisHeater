@@ -1,4 +1,4 @@
-"""Entry point: python -m llmeis <tar> --model <name> [--endpoint <url>] ..."""
+"""Entry point: python -m eisheater <tar> --model <name> [--endpoint <url>] ..."""
 
 from __future__ import annotations
 
