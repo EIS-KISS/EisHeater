@@ -18,14 +18,19 @@ def main(argv=None) -> int:
             print(f"no such file: {p}", file=sys.stderr)
         return 1
 
+    # One agent per worker thread, not one per backend: the agent's HTTP client binds to the
+    # event loop of the thread that first uses it, so sharing an agent (and its client) across
+    # the concurrency worker threads breaks with "bound to a different event loop".
     agents = [
         make_agent(make_model(ep, cfg.model, api_key=cfg.api_key, timeout=cfg.request_timeout))
         for ep in cfg.endpoints
+        for _ in range(max(1, cfg.concurrency))
     ]
-    n_parallel = len(agents) * max(1, cfg.concurrency)
+    n_backends = len(cfg.endpoints)
+    n_parallel = n_backends * max(1, cfg.concurrency)
     print(f"endpoints: {cfg.endpoint}")
     print(f"model:     {cfg.model}")
-    print(f"backends:  {len(agents)} x {cfg.concurrency} concurrent = {n_parallel} parallel")
+    print(f"backends:  {n_backends} x {cfg.concurrency} concurrent = {n_parallel} parallel")
     print(f"datasets:  {', '.join(cfg.paths)}")
     print(f"output:    {cfg.outdir}")
     print()

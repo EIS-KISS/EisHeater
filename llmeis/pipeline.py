@@ -1,4 +1,4 @@
-fits, and plots overlap.
+
 from __future__ import annotations
 
 import json
@@ -346,7 +346,7 @@ def process_spectrum(spec: Spectrum, agent, outdir: Path, cfg) -> dict:
 
 
 def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[dict]:
-    finishes a spectrum it immediately takes the next from the queue. Results stay in input order."""
+
     outdir.mkdir(parents=True, exist_ok=True)
     jobs: list[tuple[int, Spectrum]] = []
     for i, (name, text) in enumerate(iter_spectra(paths)):
@@ -396,11 +396,11 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
                 with _STDOUT_LOCK:
                     print(f"    -> [{index + 1}] {spec.name} FAILED: {e}")
 
+
     for agent in agents:
-        for _ in range(max(1, cfg.concurrency)):
-            t = threading.Thread(target=_worker, args=(agent,))
-            t.start()
-            threads.append(t)
+        t = threading.Thread(target=_worker, args=(agent,))
+        t.start()
+        threads.append(t)
     for t in threads:
         t.join()
 
