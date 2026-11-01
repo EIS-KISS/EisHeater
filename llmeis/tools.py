@@ -2,14 +2,11 @@
 
 Two tools are exposed to the model:
 
-  * fit_spectrum(model_str, [omega_min, omega_max]) - run the eisfit binary on the ORIGINAL
+  * fit_spectrum(model_str, [omega_min, omega_max]): fit the proposed circuit to the ORIGINAL
                                 full-resolution spectrum (or a frequency slice of it) with the
                                 proposed circuit and hand the fit report back.
-  * simulate_spectrum(model_str) - generate a spectrum from the circuit with eisgeneratorpy on
+  * simulate_spectrum(model_str): generate a spectrum from the circuit with eisgeneratorpy on
                                 the 20-point resampled grid and hand the values back.
-
-Both read the per-spectrum context from the run deps (SpectrumDeps). The eisfit runner and output
-parser live here too because the pipeline reuses them for the final fit that enriches the JSON.
 """
 
 from __future__ import annotations
@@ -32,11 +29,6 @@ _EISFIT_TIMEOUT = 180.0
 
 @dataclass
 class SpectrumDeps:
-    """Per-spectrum context handed to the tools through the run deps.
-
-    Deliberately carries no file name: the spectrum's name encodes the ground-truth circuit and
-    must never be exposed to the model."""
-
     csv_path: str  # path to the original EISF csv, what eisfit reads
     omega: np.ndarray  # original full-resolution omega, for slicing fit windows
     re: np.ndarray
@@ -51,8 +43,6 @@ class SpectrumDeps:
 
 def run_eisfit(csv_path: str, model_str: str, timeout: float = _EISFIT_TIMEOUT) -> str:
     """Run eisfit on a spectrum with a model string, returning its full stdout+stderr text.
-
-    A parameter written as a single value (r{100}) is the fit's starting point, one written as a
     range (r{1~1000}) bounds the fit to that interval, and one that is not given starts in the
     middle of that element's default range."""
     cmd = ["eisfit", "-f", csv_path, "-m", model_str]
@@ -74,7 +64,6 @@ def _fit_csv_path(deps: SpectrumDeps, omega_min: float | None, omega_max: float 
     """The csv to fit: the full spectrum, or a temp csv sliced to [omega_min, omega_max].
 
     Returns (csv_path, note); note is empty for the full spectrum.
-    Raises ValueError if the window selects fewer than two points."""
     if omega_min is None and omega_max is None:
         return deps.csv_path, ""
     mask = np.ones(deps.omega.size, dtype=bool)
@@ -97,9 +86,6 @@ _PARAM_RE = re.compile(
 )
 # A fit-quality row: an indented "key   value" pair, value being the trailing token(s).
 _FITQUAL_RE = re.compile(r"^\s{2,}(\S(?:.*\S)?)\s{2,}(\S.*?)\s*$")
-
-
-def _to_float(tok: str) -> float | None:
     try:
         return float(tok)
     except ValueError:
@@ -166,8 +152,6 @@ def parse_eisfit_output(text: str) -> dict:
 
 
 def register_tools(agent) -> None:
-    """Attach the fit_spectrum and simulate_spectrum tools to an agent."""
-
     @agent.tool
     def fit_spectrum(
         ctx: RunContext[SpectrumDeps],
@@ -175,20 +159,20 @@ def register_tools(agent) -> None:
         omega_min: float | None = None,
         omega_max: float | None = None,
     ) -> str:
-        """Fit a candidate circuit to the ORIGINAL full-resolution spectrum with eisfit.
+        """Fit a candidate circuit to the spectrum with eisfit.
 
         model_str is a KISS-encoded circuit, e.g. "r{50}-p{1e-4, 0.8}". Each parameter can be given
         in three ways:
-        - a single value, e.g. r{100}: the starting point of the fit;
+        - a single value, e.g. r{100}: the starting point of the fit
         - a range, e.g. r{1~1000}: bounds the fit to that interval. Use this to keep a parameter in
-          a physically sensible range or to let the optimizer explore it;
+          a physically sensible range
         - omitted, e.g. r: starts in the middle of that element's default range.
         Optionally restrict the fit to a frequency window: give omega_min and/or omega_max (rad/s)
         and only the measured points inside [omega_min, omega_max] are fitted. Use this to fit a
         single feature (e.g. one arc) in isolation. The window must select at least two points.
         Returns the full eisfit report: the fitted parameters, the fit quality (residuals, chi^2),
         and a verdict on whether the circuit actually fits the data. Use it to check how well a
-        candidate explains the spectrum, and to read off good parameter values."""
+        candidate explains the spectrum."""
         deps = ctx.deps
         try:
             csv_path, note = _fit_csv_path(deps, omega_min, omega_max)

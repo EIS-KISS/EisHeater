@@ -1,14 +1,3 @@
-"""KISS encoding: the model-string format, its documentation for the LLM, and validation.
-
-The model strings this project uses are the KISS encoding of the eisgenerator toolchain (see
-phdthesis/chapters/background/eis_boukamp_coding.tex). A circuit is a string of element symbols
-combined by an implicit parallel operator (adjacency) and an explicit series operator ("-"), with
-parentheses for grouping. Parameters are embedded in braces after each element.
-
-eisgenerator does not implement the Gerischer element "g", so model strings containing it are
-rejected here even though the encoding itself allows it.
-"""
-
 from __future__ import annotations
 
 # The element reference, in the form the LLM needs to read it. Kept in sync with the eisgenerator
@@ -75,27 +64,19 @@ def class_of(model: str) -> str:
 
 
 def has_parameters(model: str) -> bool:
-    """True if the model string carries at least one braced parameter list."""
     return "{" in model and "}" in model
 
 
 def validate_model_str(model: str, eisgen) -> tuple[bool, str]:
-    """Check a model string is usable: parseable by eisgenerator, no "g", has parameters.
-
-    Returns (ok, message). The message is empty on success, otherwise a human-readable reason the
-    LLM can act on."""
     m = model.strip().strip('"')
     if not m:
         return False, "the model string is empty"
-    # "g" is a standalone element symbol; reject it wherever it appears outside braces.
     depth = 0
     for c in m:
         if c in "{[(":
             depth += 1
         elif c in "}])":
             depth -= 1
-        elif depth == 0 and c in "gG":
-            return False, 'the model string contains the Gerischer element "g", which eisgenerator does not support'
     if not has_parameters(m):
         return False, (
             "the model string has no parameters; every element needs a braced value, "

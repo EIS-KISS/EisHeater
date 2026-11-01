@@ -1,11 +1,3 @@
-"""The LLM agent: OpenAI-compatible provider, output schema, system prompt, and factory.
-
-The inference engine is a llama-server exposing the OpenAI chat-completions API. We talk to it
-through pydantic-ai's OpenAIChatModel with a small custom provider that points the OpenAI client at
-the server's base URL. The model profile is inferred from the model name so reasoning models
-(Qwen, Llama, ...) get the right thinking/JSON-schema handling.
-"""
-
 from __future__ import annotations
 
 from openai import AsyncOpenAI
@@ -28,16 +20,10 @@ from pydantic_ai._http import httpx2
 from .modelstr import KISS_ENCODING_DOC
 from .tools import SpectrumDeps, register_tools
 
-# A reasoning model can spend many minutes on a single turn; the default 600s HTTP timeout is far
-# too short. This is the per-request read timeout, not a wall-clock cap on the whole run.
 DEFAULT_REQUEST_TIMEOUT = 3600.0
 
 
 class LlamaProvider(OpenAICompatibleProvider):
-    """Provider for an OpenAI-compatible endpoint (llama-server by default).
-
-    llama-server ignores the API key, so a dummy is supplied when none is given."""
-
     @property
     def name(self) -> str:
         return "llama-server"
@@ -162,14 +148,12 @@ def make_model(
     api_key: str | None = None,
     timeout: float = DEFAULT_REQUEST_TIMEOUT,
 ) -> OpenAIChatModel:
-    """Build an OpenAIChatModel pointed at an OpenAI-compatible endpoint (llama-server)."""
     return OpenAIChatModel(
         model_name, provider=LlamaProvider(base_url, api_key=api_key, timeout=timeout)
     )
 
 
 def make_agent(model: OpenAIChatModel) -> Agent:
-    """Create the ECM-identification agent with its tools and structured output."""
     agent = Agent(
         model,
         output_type=EcmResult,

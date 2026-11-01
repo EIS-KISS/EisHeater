@@ -15,6 +15,10 @@ what the spectrum is believed to measure, and the parameters of a final `eisfit`
 - `eisfit` on your `$PATH`
 - `eisgenerator` (the `eisgenerator` python bindings)
 - Any OpenAI compatible llm endpoint serving a multimodal model
+- kiss python bindings:
+  - libkisstypepy
+  - libeisfitpy
+  - eisgeneratorpy
 
 ## Setup
 

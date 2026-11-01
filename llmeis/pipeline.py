@@ -1,19 +1,3 @@
-"""The per-spectrum pipeline and the tar-level driver.
-
-For each spectrum the pipeline:
-  1. renders Nyquist and Bode plots (meannyquist style),
-  2. resamples the spectrum to 20 log-spaced points,
-  3. hands the spectrum to the agent in all three forms (full data, resampled data, plots) plus
-     the prompt,
-  4. lets the agent reason over several turns with the fit/simulate tools,
-  5. validates the model's final circuit string,
-  6. runs a final eisfit with that circuit and enriches the JSON with the fit parameters.
-
-One JSON per spectrum is written to the output dir, plus a summary at the end. Spectra are
-processed with up to cfg.concurrency parallel workers (1 = sequential); each spectrum is
-independent, so its LLM turns, fits, and plots overlap.
-"""
-
 from __future__ import annotations
 
 import json
@@ -53,18 +37,14 @@ from .spectra import (
 )
 from .tools import SpectrumDeps, parse_eisfit_output, run_eisfit
 
-# Serializes all stdout (progress lines and streamed turn blocks) so concurrent spectra' output
-# never interleaves mid-line or mid-block.
 _STDOUT_LOCK = threading.Lock()
 
 
 def _safe(name: str) -> str:
-    """A spectrum name as a file stem: only the path separator is illegal on Linux."""
     return name.replace("/", "_")
 
 
 def build_prompt(spec: Spectrum, res_omega, res_re, res_im, nyquist_png: bytes, bode_png: bytes):
-    """The user prompt: the spectrum in all three forms plus the task framing."""
     w0, w1 = spec.omega_range
     text = (
         "Identify the equivalent circuit model for this EIS spectrum.\n\n"
@@ -83,7 +63,6 @@ def build_prompt(spec: Spectrum, res_omega, res_re, res_im, nyquist_png: bytes, 
 
 
 def _serialize_prompt_content(content) -> str | list:
-    """UserPromptPart content is a str or a list of str/BinaryImage; keep images as identifiers only."""
     if isinstance(content, str):
         return content
     items = []
@@ -98,7 +77,6 @@ def _serialize_prompt_content(content) -> str | list:
 
 
 def _as_text(value) -> str:
-    """Normalize a prompt/instructions value (str, or a list of them) to a single string."""
     if isinstance(value, str):
         return value
     if isinstance(value, (list, tuple)):
@@ -107,11 +85,6 @@ def _as_text(value) -> str:
 
 
 def serialize_turns(messages) -> list[dict]:
-    """The agent's message history as JSON-safe dicts: one entry per model request/response,
-    with each part tagged by kind (system-prompt, user-prompt, thinking, tool-call, tool-return, text).
-
-    The system prompt is stored on ModelRequest.instructions (not in parts) and is emitted once, on
-    the first request, so the initial prompt is visible in the output."""
     turns = []
     system_emitted = False
     for msg in messages:
@@ -147,13 +120,6 @@ def serialize_turns(messages) -> list[dict]:
 
 
 class TurnsStream:
-    """Captures the agent's turns live from the run's event stream.
-
-    Each completed turn (the initial prompt, a model response, or a tool return) is passed to
-    `on_turn` as it happens, so callers can stream it to stdout while the run is still in flight.
-    Completed turns are also accumulated in `.turns`, each numbered in the order it was emitted.
-    """
-
     def __init__(self, on_turn=None, initial_request: list[dict] | None = None):
         self._on_turn = on_turn
         self._response_parts: list[dict] = []
@@ -185,10 +151,6 @@ class TurnsStream:
         return None
 
     async def handle(self, run_ctx, event_stream):
-        """The `event_stream_handler` passed to the agent: consume the live events, emitting turns.
-
-        The event stream starts at the first model response, so the initial prompt (system + user)
-        is emitted up front, once, to match what the turns file shows."""
         if self._initial_request is not None and not self._initial_emitted:
             self._emit({"role": "request", "parts": self._initial_request})
             self._initial_emitted = True
@@ -198,7 +160,6 @@ class TurnsStream:
                 if d is not None:
                     self._response_parts.append(d)
             elif isinstance(event, FunctionToolResultEvent):
-                # A function tool finished: close out the response that called it, then record the return.
                 self._flush_response()
                 part = event.part
                 self._emit(
@@ -226,7 +187,6 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _print_user_prompt(content):
-    """Render a user-prompt part: the text (truncated) plus any attached images as identifiers."""
     if isinstance(content, str):
         _print_indented(_truncate(content, 300))
         return
@@ -238,10 +198,6 @@ def _print_user_prompt(content):
 
 
 def _print_turn(turn: dict):
-    """Render one completed turn to stdout with a clear header and labeled, indented parts.
-
-    The whole block is printed under _STDOUT_LOCK so that, with concurrent spectra, one spectrum's
-    turn block is never interleaved with another's mid-block."""
     with _STDOUT_LOCK:
         n = turn.get("turn", "?")
         role = turn["role"]
@@ -276,7 +232,6 @@ def _print_turn(turn: dict):
 
 
 def _run_once(agent, user_prompt, deps, cfg, message_history, event_stream_handler):
-    """One agent attempt. Returns (output, messages). Uses streaming when a handler is supplied."""
     if event_stream_handler is not None:
         with agent.run_stream_sync(
             user_prompt,
@@ -296,10 +251,6 @@ def _run_once(agent, user_prompt, deps, cfg, message_history, event_stream_handl
 
 
 def run_agent_with_validation(agent, prompt, deps, cfg, event_stream_handler=None):
-    """Run the agent, validating the final circuit string; retry with feedback if it is bad.
-
-    Returns (output, messages). If every attempt yields an invalid string, the last one is returned
-    so the caller can record what happened."""
     message_history = None
     user_prompt = prompt
     last = None
@@ -318,13 +269,10 @@ def run_agent_with_validation(agent, prompt, deps, cfg, event_stream_handler=Non
 
 
 def process_spectrum(spec: Spectrum, agent, outdir: Path, cfg) -> dict:
-    """Run the full pipeline on one spectrum and write its JSON + plots to outdir."""
     outdir.mkdir(parents=True, exist_ok=True)
     safe = _safe(spec.name)
 
     res_omega, res_re, res_im = resample_log(spec, cfg.resample_points)
-    # No title: the spectrum's file name encodes the ground-truth circuit and must never reach
-    # the model, so the plots (which the model sees as images) carry no identifying text.
     nyquist_png = plot_nyquist(spec.omega, spec.re, spec.im)
     bode_png = plot_bode(spec.omega, spec.re, spec.im)
     (outdir / f"{safe}_nyquist.png").write_bytes(nyquist_png)
@@ -356,8 +304,6 @@ def process_spectrum(spec: Spectrum, agent, outdir: Path, cfg) -> dict:
         )
         prompt = build_prompt(spec, res_omega, res_re, res_im, nyquist_png, bode_png)
         if cfg.turns_stdout:
-            # The event stream starts at the first model response, so seed the stream with the
-            # initial prompt (system + user) to match what the turns file shows.
             initial_request = [
                 {"kind": "system-prompt", "content": SYSTEM_PROMPT},
                 {"kind": "user-prompt", "content": _serialize_prompt_content(prompt)},
@@ -385,7 +331,6 @@ def process_spectrum(spec: Spectrum, agent, outdir: Path, cfg) -> dict:
         if cfg.dump_turns:
             (outdir / f"{safe}.turns.json").write_text(json.dumps(serialize_turns(messages), indent=2))
 
-        # Final fit with the model's circuit, to enrich the JSON with the fitted parameters.
         fit_report = run_eisfit(csv_path, out.model_str)
         fit = parse_eisfit_output(fit_report)
         result["fit"] = {
@@ -400,15 +345,7 @@ def process_spectrum(spec: Spectrum, agent, outdir: Path, cfg) -> dict:
 
 
 def process_dataset(paths: list[str], outdir: Path, agent, cfg) -> list[dict]:
-    """Process every spectrum in the given dataset paths (tars and/or csv files), writing one JSON
-    each and a summary.
-
-    Spectra are processed with up to cfg.concurrency parallel workers (1 = sequential). Each
-    spectrum is independent, so its LLM turns, fits, and plots overlap; results stay in input order."""
     outdir.mkdir(parents=True, exist_ok=True)
-
-    # Collect the spectra to process (respecting --limit), keeping the original stream index for
-    # the progress label and the job position for ordered results.
     jobs: list[tuple[int, Spectrum]] = []
     for i, (name, text) in enumerate(iter_spectra(paths)):
         if cfg.limit > 0 and i >= cfg.limit:
@@ -432,8 +369,6 @@ def process_dataset(paths: list[str], outdir: Path, agent, cfg) -> list[dict]:
             if status:
                 print(f"       {status[:100]}")
 
-    if cfg.concurrency <= 1:
-        for job_pos, (index, spec) in enumerate(jobs):
             _run(job_pos, index, spec)
     else:
         with ThreadPoolExecutor(max_workers=cfg.concurrency) as ex:
