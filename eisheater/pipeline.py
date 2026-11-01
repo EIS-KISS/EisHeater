@@ -390,8 +390,7 @@ def _load_previous_results(outdir: Path) -> dict[str, dict]:
 
 
 def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[dict]:
-
-
+    outdir.mkdir(parents=True, exist_ok=True)
     all_specs: list[tuple[int, Spectrum]] = []
     for i, (name, text) in enumerate(iter_spectra(paths)):
         if cfg.limit > 0 and i >= cfg.limit:
@@ -401,9 +400,6 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
             print(f"  skipping {name}: no usable data block")
             continue
         all_specs.append((i, spec))
-
-    # Resume: reuse the previous results and keep only the spectra that are new or previously
-    # errored. Without resume every spectrum is a job and there is nothing to reuse.
     old_by_name: dict[str, dict] = {}
     jobs = all_specs
     if cfg.resume:
@@ -420,9 +416,6 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
     results: list[dict] = [None] * len(jobs)
     progress = _Progress(len(jobs))
 
-    # Shared work queue: every worker (across all backends) pulls the next spectrum from here, so
-    # a backend that frees a slot immediately picks up the next job. Fully populated before any
-    # worker starts, so an empty queue means every job has been taken.
     q: "queue.Queue[tuple[int, int, Spectrum]]" = queue.Queue()
     for job_pos, (index, spec) in enumerate(jobs):
         q.put((job_pos, index, spec))
@@ -460,6 +453,7 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
                     print(f"    -> [{job_pos + 1}/{len(jobs)}] {spec.name} FAILED: {e}")
                     print(f"       {eta_line}")
 
+    threads = []
     for agent in agents:
         t = threading.Thread(target=_worker, args=(agent,))
         t.start()
@@ -469,8 +463,6 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
 
     results = [r for r in results if r is not None]
 
-    # The summary covers every spectrum in the dataset, in input order: this run's result where it
-    # was processed, the previous run's result where resume skipped it.
     new_by_name = {r["name"]: r for r in results}
     merged = [new_by_name.get(spec.name) or old_by_name.get(spec.name) for _, spec in all_specs]
     merged = [r for r in merged if r is not None]

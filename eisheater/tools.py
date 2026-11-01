@@ -26,8 +26,7 @@ class SpectrumDeps:
 
 def _fit_window(
     deps: SpectrumDeps, omega_min: float | None, omega_max: float | None
-
-    Returns (omega, re, im, note); note is empty for the full spectrum.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
     if omega_min is None and omega_max is None:
         return deps.omega, deps.re, deps.im, ""
     mask = np.ones(deps.omega.size, dtype=bool)
@@ -40,6 +39,7 @@ def _fit_window(
     w, r, i = deps.omega[mask], deps.re[mask], deps.im[mask]
     note = f"Fitting a slice: {int(mask.sum())} points, omega {w.min():.4e} to {w.max():.4e} rad/s"
     return w, r, i, note
+
 
 def fit_report(
     omega: np.ndarray,

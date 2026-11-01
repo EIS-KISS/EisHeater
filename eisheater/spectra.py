@@ -47,7 +47,6 @@ def parse_model(lines: list[str]) -> str:
 
 
 def _from_kisstype(name: str, text: str) -> Spectrum | None:
-    return _from_kisstype(name, text)
     loaded = kisstype.Spectra.loadFromStream(io.StringIO(text))
     points = loaded.data
     if not points:
