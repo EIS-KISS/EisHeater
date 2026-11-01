@@ -10,7 +10,7 @@ from dataclasses import dataclass
 class Config:
     paths: list[str]  # dataset paths: one or more .tar archives and/or .csv spectrum files
     outdir: str
-    endpoint: str  # OpenAI-compatible base URL (llama-server)
+    endpoint: str  # OpenAI-compatible base URL(s), comma-separated for multiple backends
     model: str  # model name to request
     api_key: str | None = None
     resample_points: int = 20
@@ -27,6 +27,11 @@ class Config:
     def model_settings(self) -> dict:
         return {"max_tokens": self.max_tokens, "temperature": self.temperature}
 
+    @property
+    def endpoints(self) -> list[str]:
+        """The backend base URLs, one per comma-separated entry in `endpoint`."""
+        return [e.strip() for e in self.endpoint.split(",") if e.strip()]
+
 
 def parse_args(argv=None) -> Config:
     ap = argparse.ArgumentParser(
@@ -42,7 +47,8 @@ def parse_args(argv=None) -> Config:
     ap.add_argument(
         "--endpoint",
         default="http://localhost:8080/v1",
-        help="OpenAI-compatible base URL of the inference server (default: localhost:8080/v1)",
+        help="OpenAI-compatible base URL(s) of the inference server(s), comma-separated for "
+             "multiple backends (default: localhost:8080/v1)",
     )
     ap.add_argument("--model", required=True, help="model name to request from the server")
     ap.add_argument("--api-key", default=None, help="API key (ignored by llama-server)")
@@ -71,7 +77,7 @@ def parse_args(argv=None) -> Config:
         "--concurrency",
         type=int,
         default=1,
-        help="number of spectra to process in parallel (default: 1 = sequential)",
+        help="number of spectra to process in parallel per backend (default: 1 = sequential)",
     )
     args = ap.parse_args(argv)
     return Config(

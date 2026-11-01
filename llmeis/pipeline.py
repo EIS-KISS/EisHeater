@@ -1,10 +1,11 @@
+fits, and plots overlap.
 from __future__ import annotations
 
 import json
 import os
+import queue
 import tempfile
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pydantic_ai import BinaryImage
@@ -344,7 +345,8 @@ def process_spectrum(spec: Spectrum, agent, outdir: Path, cfg) -> dict:
     return result
 
 
-def process_dataset(paths: list[str], outdir: Path, agent, cfg) -> list[dict]:
+def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[dict]:
+    finishes a spectrum it immediately takes the next from the queue. Results stay in input order."""
     outdir.mkdir(parents=True, exist_ok=True)
     jobs: list[tuple[int, Spectrum]] = []
     for i, (name, text) in enumerate(iter_spectra(paths)):
@@ -358,26 +360,49 @@ def process_dataset(paths: list[str], outdir: Path, agent, cfg) -> list[dict]:
 
     results: list[dict] = [None] * len(jobs)
 
-    def _run(job_pos: int, index: int, spec: Spectrum) -> None:
-        with _STDOUT_LOCK:
-            print(f"[{index + 1}] {spec.name}")
-        res = process_spectrum(spec, agent, outdir, cfg)
-        results[job_pos] = res
-        status = res["error"] or (res["fit"]["verdict"] if res["fit"] else "")
-        with _STDOUT_LOCK:
-            print(f"    -> {res['model_str']}  (confidence {res['confidence']})")
-            if status:
-                print(f"       {status[:100]}")
+    # Shared work queue: every worker (across all backends) pulls the next spectrum from here, so
+    # a backend that frees a slot immediately picks up the next job. Fully populated before any
+    # worker starts, so an empty queue means every job has been taken.
+    q: "queue.Queue[tuple[int, int, Spectrum]]" = queue.Queue()
+    for job_pos, (index, spec) in enumerate(jobs):
+        q.put((job_pos, index, spec))
 
-            _run(job_pos, index, spec)
-    else:
-        with ThreadPoolExecutor(max_workers=cfg.concurrency) as ex:
-            futures = [
-                ex.submit(_run, job_pos, index, spec)
-                for job_pos, (index, spec) in enumerate(jobs)
-            ]
-            for f in futures:
-                f.result()  # propagate any unexpected exception
+    def _worker(agent) -> None:
+        while True:
+            try:
+                job_pos, index, spec = q.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                with _STDOUT_LOCK:
+                    print(f"[{index + 1}] {spec.name}")
+                res = process_spectrum(spec, agent, outdir, cfg)
+                results[job_pos] = res
+                status = res["error"] or (res["fit"]["verdict"] if res["fit"] else "")
+                with _STDOUT_LOCK:
+                    print(f"    -> {res['model_str']}  (confidence {res['confidence']})")
+                    if status:
+                        print(f"       {status[:100]}")
+            except Exception as e:
+                results[job_pos] = {
+                    "name": spec.name,
+                    "header_model": spec.header_model,
+                    "model_str": None,
+                    "confidence": None,
+                    "type": None,
+                    "fit": None,
+                    "error": f"worker failed: {e}",
+                }
+                with _STDOUT_LOCK:
+                    print(f"    -> [{index + 1}] {spec.name} FAILED: {e}")
+
+    for agent in agents:
+        for _ in range(max(1, cfg.concurrency)):
+            t = threading.Thread(target=_worker, args=(agent,))
+            t.start()
+            threads.append(t)
+    for t in threads:
+        t.join()
 
     results = [r for r in results if r is not None]
 
