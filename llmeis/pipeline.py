@@ -382,10 +382,25 @@ def process_spectrum(spec: Spectrum, agent, outdir: Path, cfg) -> dict:
     return result
 
 
+def _load_previous_results(outdir: Path) -> dict[str, dict]:
+    """The previous run's per-spectrum results from outdir/summary.json, keyed by spectrum name.
+
+    Empty (so a resume degrades to a full run) when there is no summary yet or it cannot be read."""
+    summary_path = outdir / "summary.json"
+    if not summary_path.is_file():
+        return {}
+    try:
+        summary = json.loads(summary_path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"resume: could not read {summary_path} ({e}); processing all spectra")
+        return {}
+    return {r["name"]: r for r in summary.get("results", []) if r.get("name")}
+
+
 def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[dict]:
 
-    outdir.mkdir(parents=True, exist_ok=True)
-    jobs: list[tuple[int, Spectrum]] = []
+
+    all_specs: list[tuple[int, Spectrum]] = []
     for i, (name, text) in enumerate(iter_spectra(paths)):
         if cfg.limit > 0 and i >= cfg.limit:
             break
@@ -393,7 +408,22 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
         if spec is None:
             print(f"  skipping {name}: no usable data block")
             continue
-        jobs.append((i, spec))
+        all_specs.append((i, spec))
+
+    # Resume: reuse the previous results and keep only the spectra that are new or previously
+    # errored. Without resume every spectrum is a job and there is nothing to reuse.
+    old_by_name: dict[str, dict] = {}
+    jobs = all_specs
+    if cfg.resume:
+        old_by_name = _load_previous_results(outdir)
+        errored = [spec.name for _, spec in all_specs if old_by_name.get(spec.name, {}).get("error")]
+        new = [spec.name for _, spec in all_specs if spec.name not in old_by_name]
+        jobs = [(i, spec) for i, spec in all_specs if spec.name in set(errored) | set(new)]
+        reused = len(all_specs) - len(jobs)
+        print(
+            f"resume: reusing {reused} completed spectra; reprocessing {len(jobs)} "
+            f"({len(errored)} errored, {len(new)} not in summary)"
+        )
 
     results: list[dict] = [None] * len(jobs)
     progress = _Progress(len(jobs))
@@ -413,7 +443,7 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
                 return
             try:
                 with _STDOUT_LOCK:
-                    print(f"[{index + 1}/{len(jobs)}] {spec.name}")
+                    print(f"[{job_pos + 1}/{len(jobs)}] {spec.name}")
                 res = process_spectrum(spec, agent, outdir, cfg)
                 results[job_pos] = res
                 status = res["error"] or (res["fit"]["verdict"] if res["fit"] else "")
@@ -435,7 +465,7 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
                 }
                 eta_line = progress.finished()
                 with _STDOUT_LOCK:
-                    print(f"    -> [{index + 1}/{len(jobs)}] {spec.name} FAILED: {e}")
+                    print(f"    -> [{job_pos + 1}/{len(jobs)}] {spec.name} FAILED: {e}")
                     print(f"       {eta_line}")
 
 
@@ -448,9 +478,15 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
 
     results = [r for r in results if r is not None]
 
+    # The summary covers every spectrum in the dataset, in input order: this run's result where it
+    # was processed, the previous run's result where resume skipped it.
+    new_by_name = {r["name"]: r for r in results}
+    merged = [new_by_name.get(spec.name) or old_by_name.get(spec.name) for _, spec in all_specs]
+    merged = [r for r in merged if r is not None]
+
     summary = {
         "datasets": [os.path.basename(p) for p in paths],
-        "count": len(results),
+        "count": len(merged),
         "results": [
             {
                 "name": r["name"],
@@ -459,8 +495,8 @@ def process_dataset(paths: list[str], outdir: Path, agents: list, cfg) -> list[d
                 "type": r["type"],
                 "error": r["error"],
             }
-            for r in results
+            for r in merged
         ],
     }
     (outdir / "summary.json").write_text(json.dumps(summary, indent=2))
-    return results
+    return merged

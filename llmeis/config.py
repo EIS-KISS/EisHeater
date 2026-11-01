@@ -22,6 +22,7 @@ class Config:
     dump_turns: bool = False  # write a per-spectrum <name>.turns.json with the agent's turns
     turns_stdout: bool = False  # stream the agent's turns to stdout as the run progresses
     concurrency: int = 1  # spectra processed in parallel (1 = sequential)
+    resume: bool = False  # reuse the outdir's summary.json and only (re)process errored/new spectra
 
     @property
     def model_settings(self) -> dict:
@@ -79,6 +80,13 @@ def parse_args(argv=None) -> Config:
         default=1,
         help="number of spectra to process in parallel per backend (default: 1 = sequential)",
     )
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume an existing run in the output dir: reuse its summary.json and only reprocess "
+             "the spectra that returned an error (plus any not yet in the summary); leave the "
+             "successful results untouched",
+    )
     args = ap.parse_args(argv)
     return Config(
         paths=args.paths,
@@ -95,4 +103,5 @@ def parse_args(argv=None) -> Config:
         dump_turns=args.turns,
         turns_stdout=args.turns_stdout,
         concurrency=args.concurrency,
+        resume=args.resume,
     )

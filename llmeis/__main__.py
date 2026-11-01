@@ -37,7 +37,7 @@ def main(argv=None) -> int:
 
     results = process_dataset(cfg.paths, Path(cfg.outdir), agents, cfg)
     ok = sum(1 for r in results if not r["error"])
-    print(f"\ndone: {ok}/{len(results)} spectra processed, results in {cfg.outdir}")
+    print(f"\ndone: {ok}/{len(results)} spectra without errors, results in {cfg.outdir}")
     return 0 if ok == len(results) else 2
 
 
